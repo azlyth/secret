@@ -4,16 +4,18 @@ import (
 	"bytes"
 	"code.google.com/p/go.crypto/openpgp"
 	"encoding/base64"
-	"flag"
 	"fmt"
 	"github.com/howeyc/gopass"
+	"github.com/jessevdk/go-flags"
 	"io/ioutil"
 	"log"
 	"os"
 )
 
 // Commmand line arguments
-var verbose = flag.Bool("v", false, "Make the output verbose.")
+var options struct {
+	Verbose bool `short:"v" long:"verbose" description:"make the output verbose"`
+}
 
 // create gpg keys with
 // $ gpg --gen-key
@@ -58,7 +60,7 @@ func encryptMessage() error {
 	encstr := base64.StdEncoding.EncodeToString(bytesp)
 
 	// Output encrypted/encoded string
-	if *verbose {
+	if options.Verbose {
 		fmt.Println("Encrypted Secret:", encstr)
 	}
 
@@ -83,7 +85,7 @@ func encryptMessage() error {
 
 	// Get the passphrase and read the private key.
 	// Have not touched the encrypted string yet
-	if *verbose {
+	if options.Verbose {
 		fmt.Println("Decrypting private key using passphrase")
 	}
 	if !decryptKey(entity2) {
@@ -92,7 +94,7 @@ func encryptMessage() error {
 	}
 	//for !decryptKey(entity2) {
 	//}
-	if *verbose {
+	if options.Verbose {
 		fmt.Println("Finished decrypting private key using passphrase")
 	}
 
@@ -142,9 +144,12 @@ func decryptKey(entity *openpgp.Entity) bool {
 
 func main() {
 	// Parse command line arguments
-	flag.Parse()
+	_, err := flags.Parse(&options)
+	if err != nil {
+		return
+	}
 
-	err := encryptMessage()
+	err = encryptMessage()
 	if err != nil {
 		log.Fatal(err)
 	}
