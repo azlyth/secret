@@ -7,12 +7,14 @@ import (
 	"fmt"
 	"github.com/codegangsta/cli"
 	"github.com/howeyc/gopass"
+	"github.com/koding/kite"
 	"io/ioutil"
 	"log"
 	"os"
 )
 
-// Commmand line arguments
+const Name = "secret"
+const Version = "0.1.0"
 
 // create gpg keys with
 // $ gpg --gen-key
@@ -35,7 +37,19 @@ var commands = []cli.Command{
 		Usage:  "Encrypts a secret",
 		Action: encrypt,
 	},
+	{
+		Name:   "server",
+		Usage:  "Starts the server",
+		Action: server,
+	},
+	{
+		Name:   "client",
+		Usage:  "Connects to the server",
+		Action: client,
+	},
 }
+
+// Send subcommand
 
 func send(c *cli.Context) {
 	_, err := fmt.Println("Sending.")
@@ -44,11 +58,44 @@ func send(c *cli.Context) {
 	}
 }
 
+// Encrypt subcommand
+
 func encrypt(c *cli.Context) {
 	err := encryptMessage()
 	if err != nil {
 		exit(err)
 	}
+}
+
+// Server subcommand
+
+func server(c *cli.Context) {
+	// Create the kite
+	k := kite.New(Name, Version)
+	k.HandleFunc("hello", hello).DisableAuthentication()
+
+	// Run the kite
+	k.Config.Port = 3636
+	k.Run()
+}
+
+func hello(r *kite.Request) (interface{}, error) {
+	return "hey", nil
+}
+
+// Client subcommand
+
+func client(c *cli.Context) {
+	// Create the kite
+	k := kite.New(Name, Version)
+
+	// Connect to the server kite
+	client := k.NewClient("http://localhost:3636/kite")
+	client.Dial()
+
+	// Say hello
+	response, _ := client.Tell("hello")
+	fmt.Println(response.MustString())
 }
 
 func exit(err error) {
@@ -174,11 +221,11 @@ func decryptKey(entity *openpgp.Entity) bool {
 func main() {
 	// Setup the app
 	app := cli.NewApp()
-	app.Name = "secret"
+	app.Name = Name
 	app.Author = "Peter Valdez"
 	app.Email = "peter@nycmesh.net"
 	app.Usage = "Send secrets with ease."
-	app.Version = "0.1.0"
+	app.Version = Version
 	app.Commands = commands
 
 	// Run the app
