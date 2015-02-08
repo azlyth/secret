@@ -5,17 +5,14 @@ import (
 	"code.google.com/p/go.crypto/openpgp"
 	"encoding/base64"
 	"fmt"
+	"github.com/codegangsta/cli"
 	"github.com/howeyc/gopass"
-	"github.com/jessevdk/go-flags"
 	"io/ioutil"
 	"log"
 	"os"
 )
 
 // Commmand line arguments
-var options struct {
-	Verbose bool `short:"v" long:"verbose" description:"make the output verbose"`
-}
 
 // create gpg keys with
 // $ gpg --gen-key
@@ -25,6 +22,38 @@ const mysecretstring = "this is so very secret!"
 const prefix = "/Users/peter/"
 const secretKeyring = prefix + ".gnupg/secring.gpg"
 const publicKeyring = prefix + ".gnupg/pubring.gpg"
+
+// Command-line commands
+var commands = []cli.Command{
+	{
+		Name:   "send",
+		Usage:  "Sends a secret",
+		Action: send,
+	},
+	{
+		Name:   "encrypt",
+		Usage:  "Encrypts a secret",
+		Action: encrypt,
+	},
+}
+
+func send(c *cli.Context) {
+	_, err := fmt.Println("Sending.")
+	if err != nil {
+		exit(err)
+	}
+}
+
+func encrypt(c *cli.Context) {
+	err := encryptMessage()
+	if err != nil {
+		exit(err)
+	}
+}
+
+func exit(err error) {
+	log.Fatal(err)
+}
 
 func encryptMessage() error {
 	fmt.Println("Secret:", mysecretstring)
@@ -60,9 +89,9 @@ func encryptMessage() error {
 	encstr := base64.StdEncoding.EncodeToString(bytesp)
 
 	// Output encrypted/encoded string
-	if options.Verbose {
-		fmt.Println("Encrypted Secret:", encstr)
-	}
+	//if options.Verbose {
+	//fmt.Println("Encrypted Secret:", encstr)
+	//}
 
 	// Here is where I would transfer the encrypted string to someone else
 	// but we'll just decrypt it in the same code
@@ -85,18 +114,18 @@ func encryptMessage() error {
 
 	// Get the passphrase and read the private key.
 	// Have not touched the encrypted string yet
-	if options.Verbose {
-		fmt.Println("Decrypting private key using passphrase")
-	}
+	//if options.Verbose {
+	//fmt.Println("Decrypting private key using passphrase")
+	//}
 	if !decryptKey(entity2) {
 		fmt.Println("Incorrect password. Exiting.")
 		return nil
 	}
 	//for !decryptKey(entity2) {
 	//}
-	if options.Verbose {
-		fmt.Println("Finished decrypting private key using passphrase")
-	}
+	//if options.Verbose {
+	//fmt.Println("Finished decrypting private key using passphrase")
+	//}
 
 	// Decode the base64 string
 	dec, err := base64.StdEncoding.DecodeString(encstr)
@@ -143,14 +172,15 @@ func decryptKey(entity *openpgp.Entity) bool {
 }
 
 func main() {
-	// Parse command line arguments
-	_, err := flags.Parse(&options)
-	if err != nil {
-		return
-	}
+	// Setup the app
+	app := cli.NewApp()
+	app.Name = "secret"
+	app.Author = "Peter Valdez"
+	app.Email = "peter@nycmesh.net"
+	app.Usage = "Send secrets with ease."
+	app.Version = "0.1.0"
+	app.Commands = commands
 
-	err = encryptMessage()
-	if err != nil {
-		log.Fatal(err)
-	}
+	// Run the app
+	app.Run(os.Args)
 }
