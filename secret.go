@@ -28,6 +28,8 @@ const secretKeyring = prefix + ".gnupg/secring.gpg"
 const publicKeyring = prefix + ".gnupg/pubring.gpg"
 
 var context *cli.Context
+var entity *openpgp.Entity
+var entityList openpgp.EntityList
 
 // Flags
 
@@ -71,6 +73,12 @@ func handle(f func() error) func(*cli.Context) {
 // Receive subcommand
 
 func receive() error {
+	// Decrypt the key we'll be using to decrypt messages
+	err := decryptKey()
+	if err != nil {
+		return errors.New("Unable to decrypt key.")
+	}
+
 	// Create and configure the kite
 	k := kite.New(Name, Version)
 	k.Config.Port = 4321
@@ -139,27 +147,27 @@ func send() error {
 	reader := bytes.NewReader(buf)
 
 	// Send them a secret
-	fmt.Println("Sending secret...")
+	fmt.Print("Sending secret...")
 	encrypted, err := encryptMessage(reader, secret)
 	if err != nil {
 		return err
 	}
 	response, _ = client.Tell("secret", encrypted)
-	fmt.Println(response.MustString())
+	fmt.Println("done.")
 
 	return nil
 }
 
 func encryptMessage(publicKey io.Reader, str string) (string, error) {
 	// Read in public key
-	entitylist, err := openpgp.ReadKeyRing(publicKey)
+	entityList, err := openpgp.ReadKeyRing(publicKey)
 	if err != nil {
 		return "", err
 	}
 
 	// Encrypt string
 	buf := new(bytes.Buffer)
-	w, err := openpgp.Encrypt(buf, entitylist, nil, nil, nil)
+	w, err := openpgp.Encrypt(buf, entityList, nil, nil, nil)
 	if err != nil {
 		return "", err
 	}
@@ -183,39 +191,6 @@ func encryptMessage(publicKey io.Reader, str string) (string, error) {
 }
 
 func decryptMessage(encstr string) (string, error) {
-	var entity2 *openpgp.Entity
-	var entitylist2 openpgp.EntityList
-
-	// Output encrypted/encoded string
-	if context.Bool("verbose") {
-		fmt.Println("Encrypted Secret:", encstr)
-	}
-
-	// Open the private key file
-	keyringFileBuffer2, err := os.Open(secretKeyring)
-	if err != nil {
-		return "", err
-	}
-	defer keyringFileBuffer2.Close()
-	entitylist2, err = openpgp.ReadKeyRing(keyringFileBuffer2)
-	if err != nil {
-		return "", err
-	}
-	entity2 = entitylist2[0]
-
-	// Get the passphrase and read the private key.
-	// Have not touched the encrypted string yet
-	if context.Bool("verbose") {
-		fmt.Println("Decrypting private key using passphrase")
-	}
-	if !decryptKey(entity2) {
-		fmt.Println("Incorrect password. Exiting.")
-		return "", nil
-	}
-	if context.Bool("verbose") {
-		fmt.Println("Finished decrypting private key using passphrase")
-	}
-
 	// Decode the base64 string
 	dec, err := base64.StdEncoding.DecodeString(encstr)
 	if err != nil {
@@ -223,7 +198,7 @@ func decryptMessage(encstr string) (string, error) {
 	}
 
 	// Decrypt it with the contents of the private key
-	md, err := openpgp.ReadMessage(bytes.NewBuffer(dec), entitylist2, nil, nil)
+	md, err := openpgp.ReadMessage(bytes.NewBuffer(dec), entityList, nil, nil)
 	if err != nil {
 		return "", err
 	}
@@ -236,25 +211,37 @@ func decryptMessage(encstr string) (string, error) {
 	return decstr, nil
 }
 
-func decryptKey(entity *openpgp.Entity) bool {
+func decryptKey() error {
+	// Open the private key file
+	keyringFileBuffer, err := os.Open(secretKeyring)
+	if err != nil {
+		return err
+	}
+	defer keyringFileBuffer.Close()
+	entityList, err = openpgp.ReadKeyRing(keyringFileBuffer)
+	if err != nil {
+		return err
+	}
+	entity = entityList[0]
+
 	// Get the password
 	fmt.Printf("Password: ")
 	passphrase := gopass.GetPasswd()
 	passphrasebyte := []byte(passphrase)
 
 	// Decrypt the key and subkeys
-	err := entity.PrivateKey.Decrypt(passphrasebyte)
+	err = entity.PrivateKey.Decrypt(passphrasebyte)
 	if err != nil {
-		return false
+		return err
 	}
 	for _, subkey := range entity.Subkeys {
-		err := subkey.PrivateKey.Decrypt(passphrasebyte)
+		err = subkey.PrivateKey.Decrypt(passphrasebyte)
 		if err != nil {
-			return false
+			return err
 		}
 	}
 
-	return true
+	return nil
 }
 
 func main() {
