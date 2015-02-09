@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"code.google.com/p/go.crypto/openpgp"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"github.com/codegangsta/cli"
 	"github.com/howeyc/gopass"
 	"github.com/koding/kite"
+	"io"
 	"io/ioutil"
-	"log"
 	"os"
 )
 
@@ -33,7 +34,7 @@ var context *cli.Context
 var Flags = []cli.Flag{
 	cli.BoolFlag{
 		Name:  "verbose",
-		Usage: "talks more",
+		Usage: "print verbose output",
 	},
 }
 
@@ -61,7 +62,8 @@ func handle(f func() error) func(*cli.Context) {
 		// Run the function
 		err := f()
 		if err != nil {
-			log.Fatal(err)
+			fmt.Println(err)
+			os.Exit(1)
 		}
 	}
 }
@@ -74,12 +76,26 @@ func receive() error {
 	k.Config.Port = 4321
 	k.SetLogLevel(kite.ERROR)
 	k.HandleFunc("secret", secret).DisableAuthentication()
+	k.HandleFunc("identify", identify).DisableAuthentication()
 
 	// Run the kite
 	fmt.Println("Waiting for secrets...")
 	k.Run()
 
 	return nil
+}
+
+func identify(r *kite.Request) (interface{}, error) {
+	// Open the file
+	buf, err := ioutil.ReadFile(publicKeyring)
+	if err != nil {
+		return nil, err
+	}
+
+	// Encode the contents of the file to base64
+	str := base64.StdEncoding.EncodeToString(buf)
+
+	return str, nil
 }
 
 func secret(r *kite.Request) (interface{}, error) {
@@ -100,6 +116,12 @@ func secret(r *kite.Request) (interface{}, error) {
 // Send subcommand
 
 func send() error {
+	// Retrieve the argument
+	if len(context.Args()) != 1 {
+		return errors.New("Invalid number of arguments.")
+	}
+	secret := context.Args().First()
+
 	// Create the kite
 	k := kite.New(Name, Version)
 
@@ -107,24 +129,30 @@ func send() error {
 	client := k.NewClient("http://localhost:4321/kite")
 	client.Dial()
 
-	// Send them a secret
-	fmt.Println("Sending secret...")
-	secret, err := encryptMessage(mysecretstring)
+	// Retrieve the public key
+	response, _ := client.Tell("identify")
+	str := response.MustString()
+	buf, err := base64.StdEncoding.DecodeString(str)
 	if err != nil {
 		return err
 	}
+	reader := bytes.NewReader(buf)
 
-	response, _ := client.Tell("secret", secret)
+	// Send them a secret
+	fmt.Println("Sending secret...")
+	encrypted, err := encryptMessage(reader, secret)
+	if err != nil {
+		return err
+	}
+	response, _ = client.Tell("secret", encrypted)
 	fmt.Println(response.MustString())
 
 	return nil
 }
 
-func encryptMessage(str string) (string, error) {
+func encryptMessage(publicKey io.Reader, str string) (string, error) {
 	// Read in public key
-	keyringFileBuffer, _ := os.Open(publicKeyring)
-	defer keyringFileBuffer.Close()
-	entitylist, err := openpgp.ReadKeyRing(keyringFileBuffer)
+	entitylist, err := openpgp.ReadKeyRing(publicKey)
 	if err != nil {
 		return "", err
 	}
