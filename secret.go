@@ -9,12 +9,16 @@ import (
 	"github.com/codegangsta/cli"
 	"github.com/howeyc/gopass"
 	"github.com/koding/kite"
+	"github.com/koding/kite/protocol"
 	"io"
 	"io/ioutil"
+	"net/url"
 	"os"
 )
 
 // General values
+
+const LogLevel = kite.FATAL
 
 const Author = "Peter Valdez"
 const Email = "peter@nycmesh.net"
@@ -80,11 +84,24 @@ func receive() error {
 	}
 
 	// Create and configure the kite
-	k := kite.New(Name, Version)
+	k := kite.New("secret", Version)
 	k.Config.Port = 4321
-	k.SetLogLevel(kite.ERROR)
 	k.HandleFunc("secret", secret).DisableAuthentication()
 	k.HandleFunc("identify", identify).DisableAuthentication()
+
+	// Register the kite with Kontrol
+	err = k.Config.ReadKiteKey()
+	if err != nil {
+		return err
+	}
+	k.SetLogLevel(LogLevel)
+	k.Config.Region = "secret"
+	k.Config.Username = "secret"
+	k.Config.Environment = "secret"
+	_, err = k.Register(&url.URL{Scheme: "http", Host: "localhost:4321/kite"})
+	if err != nil {
+		return err
+	}
 
 	// Run the kite
 	fmt.Println("Waiting for secrets...")
@@ -115,7 +132,7 @@ func secret(r *kite.Request) (interface{}, error) {
 	if err != nil {
 		return nil, err
 	}
-	fmt.Println(decrypted)
+	fmt.Printf("From %s: %s\n", r.Client.Name, decrypted)
 
 	// Return an acknowledgment
 	return "Received.", nil
@@ -131,10 +148,18 @@ func send() error {
 	secret := context.Args().First()
 
 	// Create the kite
-	k := kite.New(Name, Version)
+	k := kite.New("secret", Version)
+	k.SetLogLevel(LogLevel)
+	k.Config.ReadKiteKey()
 
-	// Connect to the server kite
-	client := k.NewClient("http://localhost:4321/kite")
+	// Find other secret kites
+	kites, _ := k.GetKites(&protocol.KontrolQuery{
+		Username:    "secret",
+		Region:      "secret",
+		Environment: "secret",
+		Name:        "secret",
+	})
+	client := kites[0]
 	client.Dial()
 
 	// Retrieve the public key
@@ -147,13 +172,12 @@ func send() error {
 	reader := bytes.NewReader(buf)
 
 	// Send them a secret
-	fmt.Print("Sending secret...")
 	encrypted, err := encryptMessage(reader, secret)
 	if err != nil {
 		return err
 	}
 	response, _ = client.Tell("secret", encrypted)
-	fmt.Println("done.")
+	fmt.Println("Secret sent.")
 
 	return nil
 }
