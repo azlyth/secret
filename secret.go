@@ -7,17 +7,17 @@ import (
 	"errors"
 	"fmt"
 	"github.com/codegangsta/cli"
+	"github.com/hashicorp/mdns"
 	"github.com/howeyc/gopass"
 	"github.com/koding/kite"
-	"github.com/koding/kite/protocol"
 	"io"
 	"io/ioutil"
-	"net/url"
+	"log"
 	"os"
+	"os/user"
 )
 
 // General values
-
 const LogLevel = kite.FATAL
 
 const Author = "Peter Valdez"
@@ -26,17 +26,13 @@ const Name = "secret"
 const Usage = "Send secrets with ease."
 const Version = "0.1.0"
 
-const mysecretstring = "this is so very secret!"
-const prefix = "/Users/peter/"
-const secretKeyring = prefix + ".gnupg/secring.gpg"
-const publicKeyring = prefix + ".gnupg/pubring.gpg"
-
+var currentUser *user.User
 var context *cli.Context
 var entity *openpgp.Entity
 var entityList openpgp.EntityList
+var secretKeyring, publicKeyring string
 
 // Flags
-
 var Flags = []cli.Flag{
 	cli.BoolFlag{
 		Name:  "verbose",
@@ -45,7 +41,6 @@ var Flags = []cli.Flag{
 }
 
 // Subcommands
-
 var Commands = []cli.Command{
 	{
 		Name:   "send",
@@ -75,7 +70,6 @@ func handle(f func() error) func(*cli.Context) {
 }
 
 // Receive subcommand
-
 func receive() error {
 	// Decrypt the key we'll be using to decrypt messages
 	err := decryptKey()
@@ -98,10 +92,16 @@ func receive() error {
 	k.Config.Region = "secret"
 	k.Config.Username = "secret"
 	k.Config.Environment = "secret"
-	_, err = k.Register(&url.URL{Scheme: "http", Host: "localhost:4321/kite"})
 	if err != nil {
 		return err
 	}
+
+	// Register the mdns service
+	host, _ := os.Hostname()
+	info := []string{"Sharing secrets."}
+	service, _ := mdns.NewMDNSService(host, "_secret._tcp", "", "", 4321, nil, info)
+	server, _ := mdns.NewServer(&mdns.Config{Zone: service})
+	defer server.Shutdown()
 
 	// Run the kite
 	fmt.Println("Waiting for secrets...")
@@ -139,7 +139,6 @@ func secret(r *kite.Request) (interface{}, error) {
 }
 
 // Send subcommand
-
 func send() error {
 	// Retrieve the argument
 	if len(context.Args()) != 1 {
@@ -147,19 +146,22 @@ func send() error {
 	}
 	secret := context.Args().First()
 
+	// Find secret peers on the network
+	entriesCh := make(chan *mdns.ServiceEntry, 4)
+	mdns.Lookup("_secret._tcp", entriesCh)
+	close(entriesCh)
+	var e *mdns.ServiceEntry
+	for entry := range entriesCh {
+		e = entry
+	}
+
 	// Create the kite
-	k := kite.New("secret", Version)
+	k := kite.New(currentUser.Username, Version)
 	k.SetLogLevel(LogLevel)
 	k.Config.ReadKiteKey()
 
-	// Find other secret kites
-	kites, _ := k.GetKites(&protocol.KontrolQuery{
-		Username:    "secret",
-		Region:      "secret",
-		Environment: "secret",
-		Name:        "secret",
-	})
-	client := kites[0]
+	// Connect to the peer
+	client := k.NewClient(fmt.Sprintf("http://%s:%d/kite", e.AddrV4, e.Port))
 	client.Dial()
 
 	// Retrieve the public key
@@ -269,6 +271,15 @@ func decryptKey() error {
 }
 
 func main() {
+	// Disable the log
+	log.SetOutput(ioutil.Discard)
+
+	// Setup the filenames
+	currentUser, _ = user.Current()
+	prefix := currentUser.HomeDir
+	secretKeyring = fmt.Sprintf("%s/.gnupg/secring.gpg", prefix)
+	publicKeyring = fmt.Sprintf("%s/.gnupg/pubring.gpg", prefix)
+
 	// Setup the app
 	app := cli.NewApp()
 	app.Name = Name
