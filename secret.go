@@ -83,11 +83,7 @@ func receive() error {
 	k.HandleFunc("secret", secret).DisableAuthentication()
 	k.HandleFunc("identify", identify).DisableAuthentication()
 
-	// Register the kite with Kontrol
-	err = k.Config.ReadKiteKey()
-	if err != nil {
-		return err
-	}
+	// Prepare the kite
 	k.SetLogLevel(LogLevel)
 	k.Config.Region = "secret"
 	k.Config.Username = "secret"
@@ -158,7 +154,6 @@ func send() error {
 	// Create the kite
 	k := kite.New(currentUser.Username, Version)
 	k.SetLogLevel(LogLevel)
-	k.Config.ReadKiteKey()
 
 	// Connect to the peer
 	client := k.NewClient(fmt.Sprintf("http://%s:%d/kite", e.AddrV4, e.Port))
