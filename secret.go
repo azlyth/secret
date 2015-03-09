@@ -6,8 +6,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"github.com/azlyth/mdns"
 	"github.com/codegangsta/cli"
-	"github.com/hashicorp/mdns"
 	"github.com/howeyc/gopass"
 	"github.com/koding/kite"
 	"io"
@@ -95,7 +95,11 @@ func receive() error {
 	// Register the mdns service
 	host, _ := os.Hostname()
 	info := []string{"Sharing secrets."}
-	service, _ := mdns.NewMDNSService(host, "_secret._tcp", "", "", 4321, nil, info)
+	service, err := mdns.NewMDNSService(host, "_secret._tcp", "", "", 4321, nil, info)
+	if err != nil {
+		return err
+	}
+
 	server, _ := mdns.NewServer(&mdns.Config{Zone: service})
 	defer server.Shutdown()
 
