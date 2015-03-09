@@ -250,9 +250,12 @@ func decryptKey() error {
 	entity = entityList[0]
 
 	// Get the password
-	fmt.Printf("Password: ")
-	passphrase := gopass.GetPasswd()
+	passphrase := os.Getenv("SECRET_PASSWORD")
 	passphrasebyte := []byte(passphrase)
+	if passphrase == "" {
+		fmt.Printf("Password: ")
+		passphrasebyte = gopass.GetPasswd()
+	}
 
 	// Decrypt the key and subkeys
 	err = entity.PrivateKey.Decrypt(passphrasebyte)
