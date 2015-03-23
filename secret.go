@@ -16,6 +16,7 @@ import (
 	"net"
 	"os"
 	"os/user"
+	"strconv"
 )
 
 // General values
@@ -72,14 +73,8 @@ func handle(f func() error) func(*cli.Context) {
 
 // Receive subcommand
 func receive() error {
-	// Get the IP addresses
-	ips, err := getIPs()
-	if err != nil {
-		return err
-	}
-
 	// Decrypt the key we'll be using to decrypt messages
-	err = decryptKey()
+	err := decryptKey()
 	if err != nil {
 		return errors.New("Unable to decrypt key.")
 	}
@@ -99,6 +94,13 @@ func receive() error {
 		return err
 	}
 
+	// Have the user select the IP address
+	ip, err := selectIP()
+	if err != nil {
+		return err
+	}
+	ips := []net.IP{ip}
+
 	// Register the mdns service
 	host, _ := os.Hostname()
 	info := []string{"Sharing secrets."}
@@ -111,7 +113,7 @@ func receive() error {
 	defer server.Shutdown()
 
 	// Run the kite
-	fmt.Println("Waiting for secrets...")
+	fmt.Println("\nWaiting for secrets...")
 	k.Run()
 
 	return nil
@@ -131,8 +133,6 @@ func identify(r *kite.Request) (interface{}, error) {
 }
 
 func secret(r *kite.Request) (interface{}, error) {
-	fmt.Println(r.Client.RemoteAddr())
-
 	// Retrieve the encrypted secret
 	encrypted := r.Args.One().MustString()
 
@@ -145,6 +145,49 @@ func secret(r *kite.Request) (interface{}, error) {
 
 	// Return an acknowledgment
 	return "Received.", nil
+}
+
+func selectIP() (net.IP, error) {
+	// Get the interface addresses
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil, err
+	}
+
+	// Error if there are no IP addresses
+	if len(addrs) == 0 {
+		err = errors.New("No IP addresses to choose from.")
+		return nil, err
+	}
+
+	// Parse the addresses
+	choices := make([]net.IP, len(addrs))
+	for i, addr := range addrs {
+		ip, _, err := net.ParseCIDR(addr.String())
+		if err != nil {
+			return nil, err
+		}
+		choices[i] = ip
+	}
+
+	// Display the choices
+	fmt.Println("== Your IP addresses ==")
+	for i, choice := range choices {
+		fmt.Println(strconv.Itoa(i), "-", choice.String())
+	}
+
+	// Gather the user's input
+	choice := -1
+	for choice < 0 || choice >= len(choices) {
+		fmt.Println("\nListen on which? (Enter a number)")
+		fmt.Print("> ")
+		_, err = fmt.Scanf("%d", &choice)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return choices[choice], nil
 }
 
 func getIPs() ([]net.IP, error) {
@@ -183,7 +226,6 @@ func send() error {
 	var e *mdns.ServiceEntry
 	for entry := range entriesCh {
 		e = entry
-		fmt.Println(e.AddrV4)
 	}
 
 	// Create the kite
@@ -284,8 +326,9 @@ func decryptKey() error {
 	passphrase := os.Getenv("SECRET_PASSWORD")
 	passphrasebyte := []byte(passphrase)
 	if passphrase == "" {
-		fmt.Printf("Password: ")
+		fmt.Printf("Enter your PGP key password: ")
 		passphrasebyte = gopass.GetPasswd()
+		fmt.Println()
 	}
 
 	// Decrypt the key and subkeys
@@ -316,9 +359,9 @@ func main() {
 	// Setup the app
 	app := cli.NewApp()
 	app.Name = Name
-	app.Author = Author
 	app.Email = Email
 	app.Usage = Usage
+	app.Author = Author
 	app.Version = Version
 	app.Commands = Commands
 
