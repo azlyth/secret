@@ -95,11 +95,10 @@ func receive() error {
 	}
 
 	// Have the user select the IP address
-	ip, err := selectIP()
+	ips, err := selectIPs()
 	if err != nil {
 		return err
 	}
-	ips := []net.IP{ip}
 
 	// Register the mdns service
 	host, _ := os.Hostname()
@@ -147,33 +146,67 @@ func secret(r *kite.Request) (interface{}, error) {
 	return "Received.", nil
 }
 
-func selectIP() (net.IP, error) {
-	// Get the interface addresses
-	addrs, err := net.InterfaceAddrs()
+func selectIPs() ([]net.IP, error) {
+	// Get the interfaces
+	allInterfaces, err := net.Interfaces()
 	if err != nil {
 		return nil, err
 	}
 
-	// Error if there are no IP addresses
-	if len(addrs) == 0 {
-		err = errors.New("No IP addresses to choose from.")
+	// Filter out the ones with no addresses
+	ifaces := make([]net.Interface, 0)
+	for _, iface := range allInterfaces {
+		// Get the addresses
+		addrs, err := iface.Addrs()
+		if err != nil {
+			return nil, err
+		}
+
+		// The interface is a valid choice if it has addresses
+		if len(addrs) > 0 {
+			ifaces = append(ifaces, iface)
+		}
+	}
+
+	// Error if there are no interfaces
+	if len(ifaces) == 0 {
+		err = errors.New("No interfaces with addresses to listen on.")
 		return nil, err
 	}
 
 	// Parse the addresses
-	choices := make([]net.IP, len(addrs))
-	for i, addr := range addrs {
-		ip, _, err := net.ParseCIDR(addr.String())
-		if err != nil {
-			return nil, err
-		}
-		choices[i] = ip
+	choices := make([]net.Interface, len(ifaces))
+	for i, iface := range ifaces {
+		choices[i] = iface
 	}
 
 	// Display the choices
-	fmt.Println("== Your IP addresses ==")
+	fmt.Println("= Your network interfaces =")
 	for i, choice := range choices {
-		fmt.Println(strconv.Itoa(i), "-", choice.String())
+		// Get addresses
+		addrs, err := choice.Addrs()
+		if err != nil {
+			return nil, err
+		}
+
+		// Skip if there are no addresses on this
+		if len(ifaces) == 0 {
+			err = errors.New("No interfaces to listen on.")
+			return nil, err
+		}
+
+		// Get the IP
+		ips := make([]net.IP, len(addrs))
+		for i, addr := range addrs {
+			ip, _, err := net.ParseCIDR(addr.String())
+			if err != nil {
+				return nil, err
+			}
+			ips[i] = ip
+		}
+
+		// Display the addresses
+		fmt.Println(strconv.Itoa(i), "-", ips)
 	}
 
 	// Gather the user's input
@@ -187,7 +220,24 @@ func selectIP() (net.IP, error) {
 		}
 	}
 
-	return choices[choice], nil
+	// Get the interface addresses
+	chosenInterface := choices[choice]
+	addrs, err := chosenInterface.Addrs()
+	if err != nil {
+		return nil, err
+	}
+
+	// Convert Addrs to IPs
+	ips := make([]net.IP, len(addrs))
+	for i, addr := range addrs {
+		ip, _, err := net.ParseCIDR(addr.String())
+		if err != nil {
+			return nil, err
+		}
+		ips[i] = ip
+	}
+
+	return ips, nil
 }
 
 func getIPs() ([]net.IP, error) {
