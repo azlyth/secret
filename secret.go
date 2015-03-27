@@ -17,6 +17,7 @@ import (
 	"os"
 	"os/user"
 	"strconv"
+	"strings"
 )
 
 // General values
@@ -33,6 +34,10 @@ var context *cli.Context
 var entity *openpgp.Entity
 var entityList openpgp.EntityList
 var secretKeyring, publicKeyring string
+
+// Convenience
+var InternalAddrs []string
+var InvalidPrefixes []string
 
 // Flags
 var Flags = []cli.Flag{
@@ -96,8 +101,12 @@ func receive() error {
 		return err
 	}
 
-	// Have the user select the IP address
-	ips, err := selectIPs()
+	// Get the interface and IPs that'll be used
+	iface, err := autoSelectInterface()
+	if err != nil {
+		return err
+	}
+	ips, err := getIPsFromInterface(iface, true)
 	if err != nil {
 		return err
 	}
@@ -110,11 +119,11 @@ func receive() error {
 		return err
 	}
 
-	server, _ := mdns.NewServer(&mdns.Config{Zone: service})
+	server, _ := mdns.NewServer(&mdns.Config{Zone: service, Iface: &iface})
 	defer server.Shutdown()
 
 	// Run the kite
-	fmt.Println("\nWaiting for secrets...")
+	fmt.Println("Waiting for secrets...")
 	k.Run()
 
 	return nil
@@ -148,6 +157,72 @@ func secret(r *kite.Request) (interface{}, error) {
 	return "Received.", nil
 }
 
+// Return true if s is prefixed by any of the prefixes
+func prefixedByAny(s string, prefixes []string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(s, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func getIPsFromInterface(iface net.Interface, ignoreInternal bool) ([]net.IP, error) {
+	// Get the addresses
+	addrs, err := iface.Addrs()
+	if err != nil {
+		return nil, err
+	}
+
+	// Get the IPs from the Addrs
+	ips := make([]net.IP, 0, len(addrs))
+	for _, addr := range addrs {
+		// Ignore internal addresses
+		if ignoreInternal && prefixedByAny(addr.String(), InternalAddrs) {
+			continue
+		}
+
+		// Convert to IP
+		ip, _, err := net.ParseCIDR(addr.String())
+		if err != nil {
+			return nil, err
+		}
+		ips = append(ips, ip)
+	}
+
+	return ips, nil
+}
+
+func autoSelectInterface() (net.Interface, error) {
+	// Get the interfaces
+	allInterfaces, err := net.Interfaces()
+	if err != nil {
+		return net.Interface{}, err
+	}
+
+	// Get the list of addressable IPs
+	for _, iface := range allInterfaces {
+		// Ignore certain interfaces
+		if prefixedByAny(iface.Name, InvalidPrefixes) {
+			continue
+		}
+
+		// Get the interface IPs
+		ips, err := getIPsFromInterface(iface, true)
+		if err != nil {
+			return net.Interface{}, err
+		}
+
+		// Return if any valid IPs retrieved
+		if len(ips) > 0 {
+			return iface, nil
+		}
+	}
+
+	err = errors.New("Unable to automatically choose an IP address.")
+	return net.Interface{}, err
+}
+
 func selectIPs() ([]net.IP, error) {
 	// Get the interfaces
 	allInterfaces, err := net.Interfaces()
@@ -156,7 +231,7 @@ func selectIPs() ([]net.IP, error) {
 	}
 
 	// Filter out the ones with no addresses
-	ifaces := make([]net.Interface, 0)
+	choices := make([]net.Interface, 0, 4)
 	for _, iface := range allInterfaces {
 		// Get the addresses
 		addrs, err := iface.Addrs()
@@ -166,49 +241,25 @@ func selectIPs() ([]net.IP, error) {
 
 		// The interface is a valid choice if it has addresses
 		if len(addrs) > 0 {
-			ifaces = append(ifaces, iface)
+			choices = append(choices, iface)
 		}
 	}
 
 	// Error if there are no interfaces
-	if len(ifaces) == 0 {
+	if len(choices) == 0 {
 		err = errors.New("No interfaces with addresses to listen on.")
 		return nil, err
 	}
 
-	// Parse the addresses
-	choices := make([]net.Interface, len(ifaces))
-	for i, iface := range ifaces {
-		choices[i] = iface
-	}
-
 	// Display the choices
-	fmt.Println("= Your network interfaces =")
+	fmt.Println("- Your network interfaces -")
 	for i, choice := range choices {
-		// Get addresses
-		addrs, err := choice.Addrs()
+		ips, err := getIPsFromInterface(choice, false)
 		if err != nil {
 			return nil, err
 		}
 
-		// Skip if there are no addresses on this
-		if len(ifaces) == 0 {
-			err = errors.New("No interfaces to listen on.")
-			return nil, err
-		}
-
-		// Get the IP
-		ips := make([]net.IP, len(addrs))
-		for i, addr := range addrs {
-			ip, _, err := net.ParseCIDR(addr.String())
-			if err != nil {
-				return nil, err
-			}
-			ips[i] = ip
-		}
-
-		// Display the addresses
-		fmt.Println(strconv.Itoa(i), "-", ips)
+		fmt.Println(strconv.Itoa(i), "-", choice.Name, ips)
 	}
 
 	// Gather the user's input
@@ -223,41 +274,9 @@ func selectIPs() ([]net.IP, error) {
 	}
 
 	// Get the interface addresses
-	chosenInterface := choices[choice]
-	addrs, err := chosenInterface.Addrs()
+	ips, err := getIPsFromInterface(choices[choice], false)
 	if err != nil {
 		return nil, err
-	}
-
-	// Convert Addrs to IPs
-	ips := make([]net.IP, len(addrs))
-	for i, addr := range addrs {
-		ip, _, err := net.ParseCIDR(addr.String())
-		if err != nil {
-			return nil, err
-		}
-		ips[i] = ip
-	}
-
-	return ips, nil
-}
-
-func getIPs() ([]net.IP, error) {
-	// Get the string interface addresses
-	addrs, err := net.InterfaceAddrs()
-	if err != nil {
-		return nil, err
-	}
-
-	// Convert them to actual IP objects
-	ips := make([]net.IP, 0, 4)
-	for _, addr := range addrs {
-		ip, _, err := net.ParseCIDR(addr.String())
-		if err != nil {
-			return nil, err
-		}
-
-		ips = append(ips, ip)
 	}
 
 	return ips, nil
@@ -407,6 +426,10 @@ func main() {
 	prefix := currentUser.HomeDir
 	secretKeyring = fmt.Sprintf("%s/.gnupg/secring.gpg", prefix)
 	publicKeyring = fmt.Sprintf("%s/.gnupg/pubring.gpg", prefix)
+
+	// Setup the convenience values
+	InvalidPrefixes = []string{"docker", "vbox", "awdl"}
+	InternalAddrs = []string{"127.0.0.1/8", "fe80::1/64", "::1/128"}
 
 	// Setup the app
 	app := cli.NewApp()
