@@ -45,15 +45,17 @@ var Flags = []cli.Flag{
 // Subcommands
 var Commands = []cli.Command{
 	{
-		Name:   "send",
-		Usage:  "Sends a secret",
-		Action: handle(send),
+		Name:      "send",
+		ShortName: "s",
+		Usage:     "Sends a secret",
+		Action:    handle(send),
 	},
 	{
-		Name:   "receive",
-		Usage:  "Waits for secrets",
-		Action: handle(receive),
-		Flags:  Flags,
+		Name:      "receive",
+		ShortName: "r",
+		Usage:     "Waits for secrets",
+		Action:    handle(receive),
+		Flags:     Flags,
 	},
 }
 
